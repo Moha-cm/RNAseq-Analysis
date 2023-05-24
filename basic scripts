@@ -1,0 +1,35 @@
+# Bash-script
+
+# creating new directories in a loop for the files in the working directory 
+#!/bin/bash
+
+i=0
+
+for f in /root/OK/*
+do
+  echo "Processing $f file..."
+  pwd
+  a="Denji"
+  mkdir "$a"_"$i"
+  cd "/root/OK/$a"_"$i"
+  touch denji
+  cd ..
+  ((i++))
+done
+
+
+
+# remove characters from file names using command line in the working directory 
+
+#!/bin/bash
+
+for f in /root/OK/*
+do
+  echo "Processing $f file..."
+  rename 's/.txt//' $f
+  echo "Processed"
+done
+
+
+
+
