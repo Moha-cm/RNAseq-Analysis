@@ -1,0 +1,173 @@
+---
+title: "Bulk RNA seq Tutorial"
+author: "MOHANKumar"
+date: "2023-10-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+In this tutorial, we will focus on the bulk RNA-seq data analysis (transcriptomic data analysis). We will use pair end samples from the NCBI GEO dataset. The  downloaded  reference genome and  reference annotation file (GFF, GTF) from the Ensembl database (GRCh38.p14). Before we start, make sure that all the files are available in your file folders. The reference file has been indexed with the bwa tool. Follow this tutorial step by step to obtain the count data.For this tutorial, we will write a simple basic bash script and explain each process clearly below.
+
+
+
+  For the easy access  the folder path has been stored in the variable
+
+
+```{bash,eval=FALSE}
+
+paired="/home/user/Desktop/RNAseq_analysis/sample_files/fastq_files/trimmo/pair_read"
+unpaired="/home/user/Desktop/RNAseq_analysis/sample_files/fastq_files/trimmo/unpair_read"
+index_path="/home/user/Desktop/RNAseq_analysis/sample_files/BWA_index/genome_index/Homo_sapiens.GRCh38.dna.primary_assembly.fa"
+aligned_file="/home/user/Desktop/RNAseq_analysis/sample_files/alignmed_Out"
+
+annotate_file="/home/user/Desktop/RNAseq_analysis/sample_files/Annatation_file/Homo_sapiens.GRCh38.110.gtf"
+
+count_output="/home/user/Desktop/RNAseq_analysis/sample_files/Couts_file"
+
+```
+
+
+**Step1 : **
+
+
+  
+  We have saved the SRR number for each sample of specific  GEO Series ID into a single file(**SRR_number.txt**). The first step of the process is to download the SRA file for each SRR number in that file. We use the "prefetch" command of the SRA toolkit to download the SRA files. Prefetch downloads Runs (compressed SRA files) and their conversion data. It can also resume incomplete Run downloads.To install SRA tool kid check the  [https://github.com/ncbi/sra-tools/wiki/02.-Installing-SRA-Toolkit](github)
+
+
+
+
+```{bash,eval=FALSE}
+
+gedit script_file.sh 
+
+```
+
+The scripts to run the file are written in a single file. Check them carefully for full understanding.
+```{bash,eval=FALSE}
+file=$1
+steps_count=0
+while read -r line; do
+    echo "Processing the SRR number  $line "
+    
+ #Prefetch     
+   
+    prefetch -p -v  $line -o ~/Desktop/RNAseq_analysis/sample_files/prefetch_files/$line.sra
+   
+```
+
+
+**Step3 : **
+
+  "fasterq-dump" is a SRA toolkit tool that downloads and converts sequencing reads from NCBI’s SRA to FASTQ files. It is a newer and faster version of fastq-dump, another SRA toolkit tool.It can be used to convert the prefetched Runs from compressed SRA format to fastq. Use this[https://github.com/ncbi/sra-tools/wiki/HowTo:-fasterq-dump/3747b8f5e5ef0f5f974e223267ad3a571269b2e6](link) for more info. 
+
+  The files prefetched has been converted into fastq file manner with the help of fasterq-dump.
+
+
+```{bash,eval = FALSE}
+
+#fasterq dump 
+
+  fasterq-dump ~/Desktop/RNAseq_analysis/sample_files/prefetch_files/$line.sra -p -O ~/Desktop/RNAseq_analysis/sample_files/fastq_files -t ~/Desktop/RNAseq_analysis/sample_files/temp -e 6 
+  
+  
+```
+
+**Step 4 :**
+    
+  "Trimmomatic" is a command line tool that trims and crops Illumina (FASTQ) data and removes adapters. Adapters can cause problems for some library preparations and applications. Trimmomatic has two modes: Paired end and Single end. The Paired end mode keeps the read pairs aligned and uses them to find adapter or PCR primer fragments better. Trimmomatic works with FASTQ files (with phred + 33 or phred + 64 quality scores).
+
+  Trimmomatic can trim both paired-end and single-end data.For paired-end data, you need to specify two input files and four output files. Two output files are for the ‘paired’ output, where both reads passed after the trimming. Two output files are for the ‘unpaired’ output, where only one read passed after  the trimming. For more info check this [http://www.usadellab.org/cms/uploads/supplementary/Trimmomatic/TrimmomaticManual_V0.32.pdf](Documentation).
+
+Trimming steps :
+  **ILLUMINACLIP**: Cut adapter and other illumina-specific sequences from the read.
+  **SLIDINGWINDOW**: Performs a sliding window trimming approach. It starts scanning at the 5‟ end and clips the read once the average quality within the window falls     below a threshold.
+  **MAXINFO**: An adaptive quality trimmer which balances read length and error rate to maximize the value of each read
+  **LEADING**: Cut bases off the start of a read, if below a threshold quality
+  **TRAILING**: Cut bases off the end of a read, if below a threshold quality
+  **CROP**: Cut the read to a specified length by removing bases from the end
+  **HEADCROP**: Cut the specified number of bases from the start of the read
+  **MINLEN**: Drop the read if it is below a specified length
+  **AVGQUAL**: Drop the read if the average quality is below the specified level
+  **TOPHRED33**: Convert quality scores to Phred-33
+  **TOPHRED64**: Convert quality scores to Phred-64
+
+ 
+
+```{bash,eval = FALSE}
+
+# Trimmometric process  
+ trimmomatic PE -threads 6  ~/Desktop/RNAseq_analysis/sample_files/fastq_files/${line}_1.fastq \
+                  ~/Desktop/RNAseq_analysis/sample_files/fastq_files/${line}_2.fastq \
+       	          ${paired}/${line}_R1_P.fastq ${unpaired}/${line}_R1_UP.fastq \
+                 ${paired}/${line}_R2_P.fastq ${unpaired}/${line}_R2_UP.fastq \
+                 ILLUMINACLIP:TruSeq4-PE.fa:2:30:10:1:TRUE \
+                 LEADING:30 TRAILING:30 SLIDINGWINDOW:2:30 MINLEN:45
+                 
+                 
+```
+
+
+**Step 5: **
+    
+  "BWA" is a software package that uses the Burrows-Wheeler Transform (BWT) to align short DNA sequences to a large reference genome, such as the human genome. BWA consists of three algorithms: BWA-backtrack, BWA-SW and BWA-MEM. Each algorithm is designed for different types of reads and has different advantages and disadvantages.
+
+  BWA works by first building an index of the reference genome with the ‘index’ command. This index is a compressed representation of the genome that allows efficient searching. Then, BWA aligns the reads to the index with the ‘aln’, ‘bwasw’ or ‘mem’ command, depending on the algorithm chosen. The output of this step is a file that contains the alignments in suffix array (SA) coordinates, which are numbers that indicate the position of the suffixes in the BWT. Finally, BWA converts the SA coordinates to chromosomal coordinates with the ‘samse’ or ‘sampe’ command for single-end or paired-end reads, respectively. The output of this step is a SAM or BAM file that can be further processed by other tools.
+
+For more information about BWA, visit its[https://github.com/lh3/bwa](GitHub) page, read its [https://genomics.sschmeier.com/ngs-mapping/index.html](documentation).
+
+```{bash,eval = FALSE}
+
+# Alignment 
+
+ bwa mem -t 5 ${index_path} ${paired}/${line}_R1_P.fastq ${paired}/${line}_R2_P.fastq -o ${aligned_file}/${line}.sam
+ 
+
+```
+
+
+**Step 6: **
+ 
+  "featureCounts" is a program that counts how many reads map to genomic features, such as genes, exons, promoters, gene bodies, genomic bins and chromosomal locations. It can be used for both RNA-seq and genomic DNA-seq data. featureCounts takes SAM/BAM files and an annotation file with the chromosomal coordinates of features as input. It outputs the number of reads assigned to each feature (or meta-feature) and the summary statistics of the overall counting results, including the number of successfully assigned reads and the number of reads that failed to be assigned for various reasons.
+
+
+
+
+
+```{bash,eval=FALSE}
+
+aligned_file="/home/user/Desktop/RNAseq_analysis/sample_files/alignmed_Output"
+
+
+
+#features count 
+
+ featureCounts -F "GTF" -t "gene" -a ${annotate_file} -o ${count_output}/${line}.txt  ${aligned_file}/${line}.sam 
+ 
+ done<"$file"
+ 
+```
+
+
+
+**Step 7: **
+To run the entire script make the file as executable and run the file
+
+```{bash,eval =FALSE}
+
+# MAke the file to executable
+chmod +x script_file.sh
+
+#To run
+
+./script_file.sh SRR_number.txt
+
+
+```
+
+
+
+
