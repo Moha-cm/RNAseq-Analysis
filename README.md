@@ -33,7 +33,10 @@ conda install -c bioconda bwa
 conda install -c bioconda subread
 ```
 
-Steps to be followe
+### ** RNAseq Processing Pipeline
+
+![image](https://github.com/Moha-cm/RNAseq-Analysis/assets/118077473/1a2d98c8-3b6b-48ed-bd23-e5248a2c81de)
+
 
 
 
