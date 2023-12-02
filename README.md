@@ -1,2 +1,1 @@
-# Bash-script
-bash script files
+### **Bulk_RNA_Seq**
