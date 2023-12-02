@@ -40,6 +40,8 @@ conda install -c bioconda subread
 
 **Step2**
 
+![image](https://github.com/Moha-cm/RNAseq-Analysis/assets/118077473/dfd24d5d-3a5b-4522-af71-ecdda76a5f14)
+
 
 
 
