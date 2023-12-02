@@ -35,7 +35,14 @@ conda install -c bioconda subread
 
 ### **RNAseq Processing Pipeline**
 
-![image](https://github.com/Moha-cm/RNAseq-Analysis/assets/118077473/1a2d98c8-3b6b-48ed-bd23-e5248a2c81de)
+**Step1**
+![image](https://github.com/Moha-cm/RNAseq-Analysis/assets/118077473/68a9da7f-4457-49d7-b976-515dd947197b)
+
+**Step2**
+
+
+
+
 
 
 
