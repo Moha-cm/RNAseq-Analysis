@@ -1,0 +1,562 @@
+---
+title: "RNA-Seq Analysis "
+author: "MOHANKUMAR"
+date: "2023-07-31"
+output: 
+  html_document:
+    theme: cerulean
+    toc: true
+    toc_float: false
+---
+
+# *Overview*
+   This R markdown file is created for the purpose of this challenge to complete a full deferential gene expression analysis. *Requirements* For this assessment we needed  some of  R the packages like `dplyr`,`SummarizedExperiment`,`DESeq2`,`pheatmap`,`org.Hs.eg.db`,`AnnotationDbi`.
+
+
+
+   
+## Installing the package requirements 
+  Installing the packages in  R environmnet 
+```{r,error=FALSE,warning=FALSE,message=FALSE}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+   install.packages("BiocManager")
+  BiocManager::install('org.Hs.eg.db')
+  BiocManager::install('AnnotationDbi')
+  BiocManager::install("dplyr")
+  BiocManager::install("SummarizedEzperiment")
+  BiocManager::install("DESeq2")
+  BiocManager::install("pheatmap")
+  BiocManager::install('EnhancedVolcano')
+  BiocManager::install("clusterProfiler")
+  BiocManager::install("enrichplot")
+  
+```
+## Loading  the Libraries 
+ After installing the packages, we load these packages or libraies to the current R working environment for our purpose. This can be done with the help of the function  `library()`.
+ 
+```{r,error=FALSE,warning=FALSE,message=FALSE}
+library(dplyr)
+library(SummarizedExperiment)
+library(DESeq2)
+library(pheatmap)
+library(EnhancedVolcano)
+library(org.Hs.eg.db)
+library(kableExtra)
+library(ggplot2)
+library(clusterProfiler)
+library(enrichplot)
+library(DOSE)
+library(ggridges)
+library("tidyverse")
+library(pathview)
+```
+
+# Data for the analysis
+ 
+ The data using  in this markdown file is Ewing sarcoma which is a pediatric bone cancer which arises from the fusion of the EWSR1 and FLI1 genes. The Ewing sarcoma RNA-seq data set is provided as `(EwS.rds)`. This data is in `RangedSummarizedExperiment` format. The metadata includes a column `condition` with two levels (1) `shEF1` (EWSR1-FLI1 knock-down) and (2) `shCTR` (control). The total of 7 samples of which *3* shCTR samples,*4* shEF1 samples.
+
+
+```{r dataset accessing}
+rse <- readRDS("EwS.rds")
+rse
+```
+
+The above data set is a `RangedSummerizedExperiment`. The `summarizedExperiment` is a S4 class which is an object oriented programming in R. It contains *4* main components. (1) `assays`-  Data (rows for feature and columns for samples) (2)`rowDATA` - feature information (3)`colData` - sample information  (4) `metadata` - experiment- level information. for the complete understanding use the link given [here](https://bioconductor.org/packages/release/bioc/vignettes/SummarizedExperiment/inst/doc/SummarizedExperiment.html)
+
+#Extracting the countdata and coldata for the process from the data *`rse`*
+
+```{r counts table }
+#countsdata
+
+counts_data <- assay(rse) 
+
+dimensions_counts <- dim(counts_data)
+print(paste("Dimension of the count data: ", dimensions_counts[1], "rows,", dimensions_counts[2], "columns" ))
+
+counts_data %>% 
+  head() %>%
+  kable()%>%
+  kable_styling(bootstrap_options = "bordered")
+  
+
+```
+
+```{r}
+column_data <- data.frame(colData(rse))
+colnames(column_data)
+rownames(column_data)
+dimensions_coldata <- dim(column_data)
+cat('\n')
+print(paste("Dimension of the count data: ", dimensions_coldata[1], "rows,", dimensions_coldata[2], "columns" ))
+
+```
+
+
+# Data Preprocessing 
+
+Removing the `rowsums`which is equal to 0 in  `counts_data`
+```{r coldata}
+#removing rowsums == 0
+
+counts_data <- counts_data[which(rowSums(counts_data)>0),]
+
+dimensions_counts <- dim(counts_data)
+print(paste("Dimension of the count data: ", dimensions_counts[1], "rows,", dimensions_counts[2], "columns" ))
+
+```
+extracting the condition data from the `column_data` 
+```{r}
+condition_data <- data.frame(column_data$condition)
+colnames(condition_data)[1] <- "condition"
+rownames(condition_data) <- column_data$run
+condition_data%>%
+  kable()%>%
+  kable_styling(bootstrap_options = "bordered")
+  
+```
+
+#checking the conditions thew rownames of *`condition_data`* is present in  the colnames of *`counts_data`*
+
+```{r}
+all(rownames(condition_data) %in% colnames(counts_data))
+all(colnames(counts_data) == rownames(condition_data))
+```
+
+#Constucting the DESeq2 object 
+
+The differentially expressed genes  were analyzed by the `DESeq2` library. The tutorial for `DESeq2` is given [here](https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html). The DESeq2 object is created by the giving the `count_data` and `condition_data` and  based on the condition the design of the object matrix has been created.
+
+```{r message=FALSE, warning=FALSE}
+# construct the DESeq2 object 
+dds <- DESeqDataSetFromMatrix(countData = counts_data,colData = condition_data,design = ~condition)
+dds
+```
+
+# Removing the low gene counts. 
+`shCTR` is used as a reference for the DESeq2
+```{r}
+# prefiltering : removing rows with low gene counts 
+#filter based on  reads_count>=10
+
+dda_fiteres <- rowSums(counts(dds)) >=100
+
+dds <-dds[dda_fiteres,]
+
+dds$Treatment <- relevel(dds$condition,ref = "shCTR") 
+
+
+```
+```{r}
+colnames(dds)
+```
+
+
+#Running the DESeq2 
+
+```{r message=FALSE, warning=FALSE}
+dds <- DESeq(dds)
+res <- results(dds)
+res 
+```
+
+
+
+#summary of the DESeq2
+```{r}
+summary(res)
+```
+#convert Ensemble to gene symbol 
+
+In the data set we have the Ensemble version ID as rownames in `res`. so,we have use these to get the gene symbols for your analysis.
+
+```{r}
+#ensemble version ids
+head(rownames(res)) %>%
+  kable()%>%
+  kable_styling(bootstrap_options = "bordered")
+
+```
+Removing the version in the rownames `ex: ENSG00000000003.14 to ENSG00000000003`
+
+
+These IDs can be converted  to gene names with the help of `org.Hs.eg.db` which a  is Genome wide annotation for Human, primarily based on mapping using Entrez Gene identifiers [link to documentation](https://bioconductor.org/packages/release/data/annotation/html/org.Hs.eg.db.html), and `AnnotationDbi` is a  R package that provides an interface for connecting and querying various annotation databases. For documnentation[ click here ](https://bioconductor.org/packages/release/bioc/html/AnnotationDbi.html)
+
+```{r warning=FALSE}
+
+si_gene <- data.frame(res) %>%
+  add_column(gene_id = 0, version = rownames(.))%>%
+  mutate(ENSEMBL=gsub("\\..*","",rownames(.))) %>%
+  mutate(gene_id = mapIds(org.Hs.eg.db,keys = .$ENSEMBL,keytype = "ENSEMBL",column = "SYMBOL")) %>%
+   `rownames<-`(.$ENSEMBL)
+
+si_gene %>%
+  head() %>%
+  kable()%>%
+  kable_styling(bootstrap_options = "bordered")
+```
+
+
+
+
+
+
+```{r message=FALSE, warning=FALSE}
+
+# creating a copy of DESeq with change in row names
+dds_2 <-dds
+rownames(dds_2 )<- si_gene$ENSEMBL
+dds_2
+```
+
+Making a single dataset by using the `merge` function
+
+
+# PCA plot
+
+## PCA summarizing the sample-level variance within the data set
+PCA plots of RNA-seq data show the characteristics of samples according to gene expression.Each dot indicates a sample. PCA uses linear commbination of the gene expression values to definr a new set of unreleated variables. It helps in reduce the dimensions of a data set. 
+
+```{r}
+# we have to normalize the dds object before ploting PCA plot by using  variance stabilizing transformation(vst) function
+dds_norm <- vst(dds,blind = FALSE)
+
+dds_norm
+```
+
+```{r}
+# We first have to save the results of the `plotPCA()` function for use with `ggplot2`
+pca_results <-
+  plotPCA(
+    dds_norm,
+    intgroup = c("condition"),
+    returnData = TRUE # This argument tells R to return the PCA values
+  )
+```
+
+```{r}
+# Plot using `ggplot()` function and save to an object
+annotated_pca_plot<-ggplot(
+  pca_results,
+  aes(
+    x = PC1,
+    y = PC2,
+    # plot points with different colors for each `condition` group
+    shape=condition,
+    color= condition,
+    size = 1.5
+    # plot points with different shapes for each `condition` group
+  )
+) +
+  # Make a scatter plot
+  geom_point()
+
+# display annotated plot
+annotated_pca_plot
+```
+
+
+# MA plot
+MA plots are a common way to visualize the results of a differential analysis.It showing the relationship between mean count and log2 fold change.
+
+```{r warning=FALSE}
+MAplot <- plotMA(res,ylim=c(-2,2),main ="MA Plot",returnData = TRUE)
+
+```
+```{r warning=FALSE}
+MAplot$lfc_category <- ifelse(MAplot$lfc < 0, "red",
+                              ifelse(MAplot$lfc == 0, "black", "blue"))
+
+MA_color <- MAplot$lfc_category
+
+ggplot(MAplot,aes(x=mean,y=lfc))+
+   geom_point(color = MA_color) +
+  xlab("Mean Expression") +
+  ylab("Log2 Fold Change") +
+  ggtitle("MA Plot with Colored Points based on lfc")+
+  scale_x_continuous(limits = c(0, 1000), breaks = seq(0, 40000, by = 40000)) +
+  scale_y_continuous(limits = c(-3, 3), breaks = seq(-3, 3, by = 1))
+```
+
+
+
+#Alternative shrinkage estimators
+The shrunken log fold changes are useful for ranking and visualization, without the need for arbitrary filters on low count genes.
+```{r}
+resultsNames(dds)
+resLFC <- lfcShrink(dds, coef="condition_shEF1_vs_shCTR", type="apeglm")
+plotMA(resLFC,ylim=c(-2,2), main ="lfcShrin MA Plot" )
+
+```
+# Volcano plot 
+```{r}
+EnhancedVolcano(si_gene,
+                lab = si_gene$gene_id,
+                x = 'log2FoldChange',
+                y = 'pvalue',title = ' Volcano Plot for condition_shEF1_vs_shCTR',labSize = 2, pointSize = 3.0)
+```
+ 
+```{r}
+EnhancedVolcano(si_gene,
+                lab = si_gene$gene_id,
+                x = 'log2FoldChange',
+                y = 'pvalue',title = ' Volcano Plot for condition_shEF1_vs_shCTR',
+                ylim = c(0,100),
+                labSize = 2, pointSize = 3.0,xlim = c(-6,6))
+
+
+```
+
+#Pheatmap 
+
+Heatmap showing the top 10 over- and under-expressed DEGs
+
+# `pheatmap` for upregulated genes
+
+```{r}
+upregular1 <- si_gene %>%
+  mutate(gene_expression = si_gene$log2FoldChange >0.1 & si_gene$padj <0.05)%>%
+  filter(gene_expression == TRUE) %>%
+  arrange(desc(.$padj)) %>%
+  distinct(gene_id, .keep_all = TRUE)%>%
+  drop_na(gene_id) %>%
+  .[1:10,]
+
+upregular1
+
+dds_2 <-dds
+rownames(dds_2 )<- si_gene$ENSEMBL
+dds_2
+
+rownames(upregular1)
+nr_counts <- counts(dds_2,normalized = T)[rownames(upregular1),]
+nr_counts2 <- t(apply(nr_counts,1,scale))
+colnames(nr_counts2) <- rownames(condition_data)
+
+
+up_genes <- merge(nr_counts2,upregular1$gene_id, by = 0) %>%
+  `rownames<-`(.$y)%>%
+  select(2:8)
+
+pheatmap(up_genes,scale = 'row',main = "Upregulated Genes",cluster_rows = F,cluster_cols = F )
+```
+
+# `pheatmap` for downregulated genes
+
+```{r}
+downregular1 <- si_gene %>%
+  mutate(gene_expression = si_gene$log2FoldChange < 0.1 & si_gene$padj <0.05)%>%
+  filter(gene_expression == TRUE) %>%
+  arrange(.$padj) %>%
+  distinct(gene_id, .keep_all = TRUE)%>%
+  drop_na(gene_id) %>%
+  .[1:10,]
+
+downregular1
+
+# renaming the rownames of  DESeq object 
+dds_2 <-dds
+rownames(dds_2 )<- si_gene$ENSEMBL
+dds_2 
+
+rownames(downregular1)
+nr_counts <- counts(dds_2,normalized = T)[rownames(downregular1),]
+nr_counts2 <- t(apply(nr_counts,1,scale))
+colnames(nr_counts2) <- rownames(condition_data)
+
+
+down_genes <- merge(nr_counts2,downregular1$gene_id, by = 0) %>%
+  `rownames<-`(.$y)%>%
+  select(2:8)
+
+pheatmap(down_genes,scale = 'row',main = "Downregulated Genes",cluster_rows = F,cluster_cols = F )
+
+```
+
+
+
+
+
+
+#  preprocessing the data for Gene Enrichment Analysis
+
+```{r warning=FALSE}
+
+EA <- data.frame(log2FoldChange = si_gene$log2FoldChange,gene_id =  si_gene$gene_id,ENSEMBL= si_gene$ENSEMBL) %>%
+  `rownames<-`(.$ENSEMBL_ids) %>%
+  .[!duplicated(.[c("gene_id")]),] %>%
+  na.omit(.) %>%
+  `rownames<-`(.$gene_id)
+
+all(rownames(EA)) %in% all(EA$gene_id)
+
+```
+
+# creating a vector for the `a_gene for the function `gseGO`
+```{r}
+
+a_gene <- c("log2FoldChange" = EA[, 1])
+names(a_gene) <- EA[,2]
+a_gene <-sort(a_gene,decreasing = TRUE)
+
+head(a_gene) %>%
+  head() %>%
+  kable()%>%
+  kable_styling(bootstrap_options = "bordered")
+```
+
+# `Keytypes` for the humandatabase
+
+```{r}
+keytypes(org.Hs.eg.db)
+```
+# Gene Set Enrichment
+
+```{r}
+
+gse <- gseGO(geneList=a_gene, 
+             ont = "ALL", 
+             keyType =  "SYMBOL", 
+             nPerm = 10000, 
+             minGSSize = 3, 
+             maxGSSize = 1000, 
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             OrgDb = org.Hs.eg.db, 
+             pAdjustMethod = "none")
+
+```
+
+```{r}
+summary(gse)%>%
+  head() %>%
+  kable()%>%
+  kable_styling(bootstrap_options = "bordered")
+```
+
+# Dotplot 
+```{r}
+
+dotplot(gse,showCategory=6, title = "          Activated vs Suppresed ",
+        font.size = 10,
+        label_format = 30,
+        split=".sign")+facet_grid(.~.sign)
+```
+
+# cnetplot
+```{r}
+# categorySize can be either 'pvalue' or 'geneNum'
+
+cnetplot(gse, categorySize="pvalue", foldChange=a_gene, showCategory = 3,node_label = "all")
+
+```
+
+```{r}
+#ridgeplot(gse) + labs(x = "enrichment distribution")
+
+gseaplot(gse, by = "all", title = gse$Description[1], geneSetID = 1)
+```
+
+# GSE with KEGG pathway 
+
+```{r}
+keytypes(org.Hs.eg.db)
+```
+
+```{r}
+# creating a vector e for th e gene enrichment analysis with KEGG
+
+b<- EA %>%
+  add_column(Uniprot = 0)%>%
+  mutate(Uniprot = mapIds(org.Hs.eg.db, keys = rownames(EA), keytype = "SYMBOL", column = "UNIPROT")) %>%
+  distinct(Uniprot, .keep_all = TRUE)%>%
+  drop_na(Uniprot)%>%
+  `rownames<-`(.$Uniprot) %>%
+  select(log2FoldChange)
+  
+head(b)%>%
+  head() %>%
+  kable()%>%
+  kable_styling(bootstrap_options = "bordered")
+
+#creating a vector 
+
+b_gene <- c("log2FoldChange" = b[, 1])
+names(b_gene) <- rownames(b)
+b_gene <-sort(b_gene,decreasing = TRUE)
+head(b_gene) %>%
+  head() %>%
+  kable()%>%
+  kable_styling(bootstrap_options = "bordered")
+
+```
+
+
+```{r warning=FALSE}
+# passing the vector e  to gseKEGG for gene enrichment analysis
+kk2 <- gseKEGG(geneList     = b_gene,
+               organism     = "hsa",
+               nPerm        = 10000,
+               minGSSize    = 3,
+               maxGSSize    =  22000 ,
+               pvalueCutoff = 0.05,
+               pAdjustMethod = "none",
+               keyType       = 'uniprot')
+
+```
+link to (KEGG link)[https://learn.gencore.bio.nyu.edu/rna-seq-analysis/gene-set-enrichment-analysis/]
+```{r warning=FALSE}
+summary(kk2) %>%
+  head() %>%
+  kable()%>%
+  kable_styling(bootstrap_options = "bordered")
+
+```
+
+# DOTPLOT for KEGG pathway 
+
+```{r}
+dotplot(kk2, showCategory = 7, title = "Enriched Pathways" , split=".sign") + facet_grid(.~.sign)
+```
+
+```{r}
+# categorySize can be either 'pvalue' or 'geneNum'
+cnetplot(kk2, categorySize="pvalue", foldChange=b_gene)
+```
+```{r}
+#ridgeplot(kk2) + labs(x = "enrichment distribution")
+```
+
+
+
+# Pathway View in browser based on the ids and Description in `summary(kk2)`
+```{r}
+# browseKEGG(kk2, 'hsa05200')
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
