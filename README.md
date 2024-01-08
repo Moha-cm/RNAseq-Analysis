@@ -1,6 +1,6 @@
 ### **Bulk_RNA_Seq**
 
-# Bulk RNA-seq Data Analysis Tutorial
+# Bulk RNA-seq Data Analysis
 
 In this tutorial, we will guide you through the process of bulk RNA-seq data analysis (transcriptomic data analysis) using pair end samples from the NCBI GEO dataset. We will utilize the Ensembl database (GRCh38.p14) for the reference genome and reference annotation files (GFF, GTF).
 
