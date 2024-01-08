@@ -1,0 +1,413 @@
+---
+title: "TCGA Gene Expression"
+author: "MOHANKumar"
+date: "2024-01-08"
+output:
+  html_document:
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# *Overview*
+   This R markdown file is created for the purpose of this challenge to complete a full deferential gene expression analysis. The Tumor RNA gene expression raw counts data has been download from the GDC data portal. This workflow id for the Breast cancer gene expression. Th control tissue gene counts has been downloaded from the GTEX portal. After Downloading the data, the data preprocess steps has been done  and the normalization has applied. Here, DESeq has performed to find the differential expressed genes and how they are correlated and the vaiable genes which are expressed in the volcono plot. Then the significant genes has been taken to find the gene enrichment analysis. 
+
+
+# Importing the Packages
+```{r,results='hide',warning=FALSE,message=FALSE}
+library(tidyverse)
+library(SummarizedExperiment)
+library(maftools)
+library(pheatmap)
+library(TCGAbiolinks)
+library(gage)
+library(biomaRt)
+library(DESeq2)
+library(dplyr)
+library(EnhancedVolcano)
+library(org.Hs.eg.db)
+library(ggplot2)
+library(clusterProfiler)
+library(enrichplot)
+library(DOSE)
+library(ggridges)
+library(pathview)
+library(reshape)
+library(RColorBrewer)
+```
+```{r}
+#setting the working directoiry 
+
+setwd("D:/Finished projects/TCGA_project")
+```
+
+# Data Dowlaoding using TCGAbiolinks
+
+Data Downloading from TCGA database for breasr cancer using TCGAbiolinks. The dataset is download from [GDCdata](portal[https://portal.gdc.cancer.gov/)
+
+```{r,results='hide',warning=FALSE,message=FALSE}
+# get a list of projects
+gdcprojects <- getGDCprojects()
+
+getProjectSummary('TCGA-BRCA')
+
+
+# building a query
+query_TCGA <- GDCquery(project = 'TCGA-BRCA',
+                       data.category = 'Transcriptome Profiling')
+output_query_TCGA <- getResults(query_TCGA)
+
+
+# build a query to retrieve gene expression data 
+query_TCGA <- GDCquery(project = "TCGA-BRCA",
+                       data.category = 'Transcriptome Profiling',
+                       experimental.strategy = 'RNA-Seq',
+                       workflow.type = 'STAR - Counts',
+                       access = 'open',
+                       barcode=c('TCGA-LL-A73Y-01A-11R-A33J-07','TCGA-A2-A04R-01A-41R-A109-07','TCGA-AN-A04D-01A-21R-A034-07','TCGA-A7-A4SD-01A-11R-A266-07'))
+
+
+getResults(query_TCGA)
+
+#dowload data 
+
+GDCdownload(query_TCGA)
+
+```
+
+```{r,results='hide',warning=FALSE,message=FALSE}
+# prepare data
+tcga_brca_data <- GDCprepare(query_TCGA, summarizedExperiment = TRUE)
+
+brca_matrix <- assay(tcga_brca_data)
+
+brca_dataframe <- as.data.frame(brca_matrix)
+
+colnames(brca_dataframe )
+colnames(brca_dataframe)[1] = "A33J"
+colnames(brca_dataframe)[2] = "A109"
+colnames(brca_dataframe)[3] = "A034"
+colnames(brca_dataframe)[4] = "A266"
+colnames(brca_dataframe )
+```
+
+# Getting the genename and gene id 
+
+Get the gene name form the ensemble version id 
+```{r,results='hide',warning=FALSE,message=FALSE,}
+listEnsembl()
+ensembl <- useEnsembl(biomart = "genes")
+datasets <- listDatasets(ensembl)
+
+ensembl.con <- useMart("ensembl", dataset = 'hsapiens_gene_ensembl')
+
+attr <- listAttributes(ensembl.con)
+filters <- listFilters(ensembl.con)
+
+TCGA_gene<- getBM(attributes = c('ensembl_gene_id_version','ensembl_gene_id','external_gene_name'),
+            filters = "ensembl_gene_id_version",
+            values = row.names(brca_dataframe) ,
+            mart = ensembl.con)
+
+row.names(TCGA_gene) <- TCGA_gene$ensembl_gene_id_version
+
+TCGA_df <- merge(brca_dataframe, TCGA_gene, by = 0, all = TRUE)
+
+row.names(TCGA_df) = TCGA_df$Row.names
+```
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+print("TCGA data:")
+TCGA_df %>%
+  head() 
+```
+
+
+# Getting raw data  counts from the reference tissue file
+
+
+The refrence tissue data set is download form the [GTEX Portal](https://www.gtexportal.org/home)
+```{r,results='hide',warning=FALSE,message=FALSE}
+gct_file_path <- "D:\\Finished projects\\TCGA_project\\GTEX\\gene_reads_2017-06-05_v8_breast_mammary_tissue.gct.gz"
+
+
+dat.gct <- read.delim(file=gct_file_path, skip=2)
+
+GTEX.df <- as.data.frame(dat.gct)
+
+
+refrence_sample <- data.frame(row.names = GTEX.df$Name,GTEX.df$Description,GTEX.df$GTEX.1117F.2826.SM.5GZXL,GTEX.df$GTEX.111YS.1926.SM.5GICC,GTEX.df$GTEX.1122O.1226.SM.5H113,GTEX.df$GTEX.1192X.2326.SM.5987X)
+colnames(refrence_sample)
+
+colnames(refrence_sample)[1]= "gene_name"
+colnames(refrence_sample)[2]= "5GZXL"
+colnames(refrence_sample)[3]= "5GICC"
+colnames(refrence_sample)[4]= "5H113"
+colnames(refrence_sample)[5]= "5987X"
+colnames(refrence_sample)
+
+```
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+print("refrence_sample:")
+refrence_sample %>%
+  head()
+```
+
+
+```{r,results='hide',warning=FALSE,message=FALSE}
+# merging the two dataframe 
+merged_df1 <-  merge(brca_dataframe,refrence_sample, by = 0, all = FALSE)
+row.names(merged_df1) = merged_df1$Row.names
+
+
+selected_columns <- c("A034", "A109", "A33J","A266","5GZXL","5GICC","5H113","5987X")
+
+new_df <- merged_df1[selected_columns]
+
+```
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+print("Raw data:")
+new_df %>%
+  head()
+```
+
+
+# Deseq Normalization 
+```{r,results='hide',warning=FALSE,message=FALSE}
+#removing the rows having sum of counts 0 
+new_df <- new_df[which(rowSums(new_df)>0),]
+
+#meta data
+col_data  <- data.frame(condition = c("Disease","Disease","Disease","Disease","Control","Control","Control","Control"),sample_type =  c("Primary_tumor","Primary_tumor","Primary_tumor","Primary_tumor","Normal","Normal","Normal","Normal"))
+
+row.names(col_data) <- selected_columns
+
+
+dds <- DESeqDataSetFromMatrix(countData = new_df, colData = col_data , design = ~ condition)
+
+filter_counts <- rowSums(counts(dds)) >= 50
+dds <- dds[filter_counts,]
+
+dds$condition <- relevel(dds$condition, ref = "Control")
+dds <- DESeq(dds)
+res <- results(dds)
+
+#summary(res)
+#colnames(dds)
+
+
+normalized_counts <- as.data.frame(counts(dds, normalized=TRUE))
+
+significat_gene <- data.frame(res)
+
+gene_df <- merged_df1[c("gene_name")]
+```
+
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+print("Meta data :")
+col_data %>%
+  head()
+```
+
+# Data Analysis 
+
+```{r,results='hide',warning=FALSE,message=FALSE}
+#setting the filter for significant gene
+padj.cutoff <- 0.05
+lfc.cutoff <- 0.58
+
+threshold <- significat_gene$padj < padj.cutoff & abs(significat_gene$log2FoldChange) > lfc.cutoff
+length(which(threshold))
+significat_gene$threshold <- threshold
+
+
+significat_gene <-  merge(significat_gene,gene_df, by = 0, all = FALSE)
+rownames(significat_gene) <- significat_gene$Row.names
+
+sigOE <- data.frame(subset(significat_gene, threshold==TRUE))
+
+
+
+## Order significant results by padj values
+
+sigOE_ordered <- significat_gene[order(significat_gene$padj), ]
+top20_sigOE_genes <- rownames(sigOE_ordered[1:20, ])
+
+
+
+## normalized counts for top 20 significant genes
+normalized_counts <- counts(dds, normalized=T)
+top20_sigOE_norm <- normalized_counts[top20_sigOE_genes, ]
+top20_sigOE_norm <- merge(top20_sigOE_norm,gene_df, by = 0, all = FALSE)
+#colnames(top20_sigOE_norm )
+
+select_col <- c("gene_name","A034", "A109","A33J","A266","5GZXL","5GICC","5H113","5987X")
+top20_sigOE_norm <- top20_sigOE_norm[select_col]
+
+
+## use melt to modify the format of the data frame
+melted_top20_sigOE <- data.frame(melt(top20_sigOE_norm))
+
+## check the column header in the "melted" data frame
+
+
+colnames(melted_top20_sigOE) <- c("gene_name", "samplename", "normalized_counts")
+
+melted_top20_sigOE<- merge(melted_top20_sigOE, col_data, by.x = "samplename", by.y = 0, all.x = FALSE)
+
+```
+
+
+
+## Plot for Significant DE Genes
+
+This Plot shows the Top 20 significant genes which has been differentially expressed 
+```{r,warning=FALSE,message=FALSE}
+## plot using ggplot2
+sig_gene_plot<-ggplot(melted_top20_sigOE)+
+  geom_point(aes(x = gene_name, y = normalized_counts, color = sample_type)) +
+  scale_y_log10() +
+  xlab("Genes") +
+  ylab("Normalized Counts") +
+  ggtitle("Top 20 Significant DE Genes") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title=element_text(hjust=0.5))
+
+print(sig_gene_plot)
+```
+
+
+## HeatMap
+
+From the Heatmap, we correlate the expressing of genes in the control and Tumor condition. By the plot, under Tumor condition more number of gene has high correlated value. The cluster nodes gives much information how they correlated
+```{r,warning=FALSE,message=FALSE}
+# Heatmap 
+
+norm_OEsig <- normalized_counts[rownames(normalized_counts),]
+### Set a color palette
+heat.colors <- brewer.pal(6, "YlOrRd")
+annotation <- data.frame(sampletype=col_data[,'sample_type'], 
+                        row.names=rownames(col_data))
+
+
+heat_map <-pheatmap(norm_OEsig, color = heat.colors, cluster_rows = T, show_rownames=F,annotation= annotation ,border_color=NA, fontsize = 10, scale="row",
+         fontsize_row = 10, height=20)
+
+print(heat_map )
+```
+From the below graph, the genes which can be expressed in specific condition  and how the genes can be correlated  under each condition for each sample has been identified.
+
+```{r}
+up <-  top20_sigOE_norm 
+row.names(up) <- up$gene_name
+colnames(up)
+up_df = up[c("A034","A109","A33J","A266","5GZXL","5GICC","5H113","5987X")]
+
+
+pheatmap(up_df,scale = 'row',main = "Upregulated Genes",cluster_rows = T,cluster_cols = T ,annotation= annotation,fontsize = 10,fontsize_row = 10, height=30)
+
+```
+
+## PCA plot
+
+There are two functions within DEseq2 to transform the data in such a manner, the first is to use a regularized logarithm **rlog()** and the second is the variance stablizing transform **vst()**. There are pros and cons to each method, we will use vst() h. It help to cluster the samples.
+
+```{r,results='hide',warning=FALSE,message=FALSE}
+dds_norm <- vst(dds,blind = FALSE)
+dds_norm
+
+
+pca_results <-  plotPCA(dds_norm,intgroup = c("condition"),returnData = TRUE) # This argument tells R to return the PCA values
+  
+annotated_pca_plot<-ggplot( pca_results,
+  aes(x = PC1,y = PC2,shape=condition,color= condition,   size = 1.5)) +geom_point()
+
+print(annotated_pca_plot)
+```
+
+
+## MA plot 
+
+MA plots display a log ratio (M) vs an average (A) in order to visualize the differences between two groups.The  expression of genes to remain consistent between conditions and so the MA plot should be similar to the shape of a trumpet with most points residing on a y intercept of 0. The blue color dots indicate the gene that are differentialy expressed and the Triangle sign indicate the genes has higher fold changes.
+```{r,warning=FALSE,message=FALSE}
+ # MA plot
+
+MA <-plotMA(res)
+
+print(MA)
+```
+
+
+## Volcono plot
+
+ Volcano plots provide an effective means for visualizing the direction, magnitude, and significance of changes in gene expression.The log2-fold differences between the groups are plotted on the x-axis and the -log10 p-value differences are plotted on the y-axis. The horizontal dashed line represents the significance threshold specified in the analysis, usually derived using a multiple testing correction.
+
+Genes whose expression is decreased versus the comparison group are located to the left of zero on the x-axis while genes whose expression is increased are illustrated to the right of zero. Genes with statistically significant differential expression lie above a horizontal threshold. Closer to zero indicates less change while moving away from zero in either direction indicates more change
+
+```{r,warning=FALSE,message=FALSE}
+significat_gene <- data.frame(res)
+significat_gene <-  merge(significat_gene,gene_df, by = 0, all = FALSE)
+sigOE <- data.frame(subset(significat_gene, threshold==TRUE))
+sigOE <- data.frame(subset(significat_gene, threshold==TRUE))
+EnhancedVolcano(sigOE,
+                lab = sigOE$gene_name,
+                x = 'log2FoldChange',
+                y = 'pvalue',title = ' Volcano Plot for Tumnor vs Normal',labSize = 2, pointSize = 3.0)
+```
+
+
+# Gene ENrichemnt Analysis 
+
+The enrichment analysis helps to get information of the genes which involves in biological,molecular, and cellualar process. This helps to see the which are the pathway are getting affected
+```{r,results='hide',warning=FALSE,message=FALSE}
+EA <- data.frame(log2FoldChange = sigOE$log2FoldChange,gene_name =  sigOE$gene_name,ensemble_version= sigOE$Row.names)
+
+
+a_gene <- c("log2FoldChange" = EA[, 1])
+names(a_gene) <- EA[,2]
+a_gene <-sort(a_gene,decreasing = TRUE)
+library(org.Hs.eg.db)
+
+```
+
+```{r,results='hide',warning=FALSE,message=FALSE}
+gse <- gseGO(geneList=a_gene, 
+             ont = "ALL", 
+             keyType =  "SYMBOL", 
+             nPerm = 10000, 
+             minGSSize = 3, 
+             maxGSSize = 1000, 
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             OrgDb = org.Hs.eg.db, 
+             pAdjustMethod = "none")
+```
+
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+summary(gse)%>%
+  head()
+```
+
+
+
+## Dot Plot 
+
+Dot-plot representation of the gene expression marker genes for the identified cell types. The size of dots represents the relative gene expression in percent for each cluster
+
+```{r}
+dotplot(gse,showCategory=6, title = "          Activated vs Suppresed ",
+        font.size = 6,
+        label_format = 25,
+        split=".sign")+facet_grid(.~.sign)
+```
+
+
